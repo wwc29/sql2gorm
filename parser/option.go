@@ -21,6 +21,7 @@ type options struct {
 	Package        string
 	GormType       bool
 	ForceTableName bool
+	AllInt64       bool
 }
 
 var defaultOptions = options{
@@ -86,6 +87,12 @@ func WithGormType() Option {
 func WithForceTableName() Option {
 	return func(o *options) {
 		o.ForceTableName = true
+	}
+}
+
+func WithAllInt64() Option {
+	return func(o *options) {
+		o.AllInt64 = true
 	}
 }
 

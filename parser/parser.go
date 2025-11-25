@@ -2,18 +2,19 @@ package parser
 
 import (
 	"fmt"
-	"github.com/jinzhu/inflection"
-	"github.com/blastrain/vitess-sqlparser/tidbparser/ast"
-	"github.com/blastrain/vitess-sqlparser/tidbparser/dependency/mysql"
-	"github.com/blastrain/vitess-sqlparser/tidbparser/dependency/types"
-	"github.com/blastrain/vitess-sqlparser/tidbparser/parser"
-	"github.com/pkg/errors"
 	"go/format"
 	"io"
 	"sort"
 	"strings"
 	"sync"
 	"text/template"
+
+	"github.com/blastrain/vitess-sqlparser/tidbparser/ast"
+	"github.com/blastrain/vitess-sqlparser/tidbparser/dependency/mysql"
+	"github.com/blastrain/vitess-sqlparser/tidbparser/dependency/types"
+	"github.com/blastrain/vitess-sqlparser/tidbparser/parser"
+	"github.com/jinzhu/inflection"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -208,7 +209,7 @@ func makeCode(stmt *ast.CreateTableStmt, opt options) (string, []string, error) 
 		if !canNull {
 			nullStyle = NullDisable
 		}
-		goType, pkg := mysqlToGoType(col.Tp, nullStyle)
+		goType, pkg := mysqlToGoType(col.Tp, nullStyle, opt)
 		if pkg != "" {
 			importPath = append(importPath, pkg)
 		}
@@ -229,7 +230,19 @@ func makeCode(stmt *ast.CreateTableStmt, opt options) (string, []string, error) 
 	return string(code), importPath, nil
 }
 
-func mysqlToGoType(colTp *types.FieldType, style NullStyle) (name string, path string) {
+func mysqlToGoType(colTp *types.FieldType, style NullStyle, opt options) (name string, path string) {
+	// ====== 新增：统一转 int64 ======
+	if opt.AllInt64 {
+		switch colTp.Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			// 不管是否 unsigned，一律转换成 int64
+			if style == NullInPointer {
+				return "*int64", ""
+			}
+			return "int64", ""
+		}
+	}
+
 	if style == NullInSql {
 		path = "database/sql"
 		switch colTp.Tp {
@@ -274,7 +287,8 @@ func mysqlToGoType(colTp *types.FieldType, style NullStyle) (name string, path s
 			path = "time"
 			name = "time.Time"
 		case mysql.TypeDecimal, mysql.TypeNewDecimal:
-			name = "string"
+			name = "decimal.Decimal"
+			path = "github.com/shopspring/decimal"
 		case mysql.TypeJSON:
 			name = "string"
 		default:
@@ -399,4 +413,26 @@ import (
 {{.}}
 {{end}}
 `
+}
+
+// ExtractTableName 从 SQL 中提取第一张 CREATE TABLE 的表名（不含 schema）
+// tablePrefix 可选，用于去掉前缀，例如 "zy_"
+func ExtractTableName(sqlStr string, tablePrefix string) (string, error) {
+	p := parser.New()
+	stmts, err := p.Parse(sqlStr, "", "")
+	if err != nil {
+		return "", err
+	}
+
+	for _, stmt := range stmts {
+		if ct, ok := stmt.(*ast.CreateTableStmt); ok {
+			name := ct.Table.Name.String() // 纯表名，不含 schema
+			if tablePrefix != "" && strings.HasPrefix(name, tablePrefix) {
+				name = name[len(tablePrefix):]
+			}
+			return name, nil
+		}
+	}
+
+	return "", fmt.Errorf("no CREATE TABLE statement found")
 }

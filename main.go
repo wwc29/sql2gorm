@@ -3,10 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/cascax/sql2gorm/parser"
 	"io"
 	"io/ioutil"
 	"os"
+
+	"github.com/cascax/sql2gorm/parser"
 )
 
 type options struct {
@@ -27,6 +28,8 @@ type options struct {
 
 	MysqlDsn   string
 	MysqlTable string
+
+	AllInt64 bool
 }
 
 func exitWithInfo(format string, a ...interface{}) {
@@ -54,6 +57,9 @@ func parseFlag() options {
 
 	flag.StringVar(&args.MysqlDsn, "db-dsn", "", "mysql dsn([user]:[pass]@/[database][?charset=xxx&...])")
 	flag.StringVar(&args.MysqlTable, "db-table", "", "mysql table name")
+
+	// 新增：
+	flag.BoolVar(&args.AllInt64, "all-int64", false, "convert all int/uint types to int64")
 
 	flag.Parse()
 	return args
@@ -99,23 +105,15 @@ func getOptions(args options) []parser.Option {
 	if args.ForceTableName {
 		opt = append(opt, parser.WithForceTableName())
 	}
+	if args.AllInt64 {
+		opt = append(opt, parser.WithAllInt64())
+	}
 	return opt
 }
 
 func main() {
 	args := parseFlag()
 
-	var output io.Writer
-	if args.OutputFile != "" {
-		f, err := os.OpenFile(args.OutputFile, os.O_CREATE|os.O_WRONLY, 0666)
-		if err != nil {
-			exitWithInfo("open %s failed, %s\n", args.OutputFile, err)
-		}
-		defer f.Close()
-		output = f
-	} else {
-		output = os.Stdout
-	}
 	sql := args.Sql
 	if sql == "" {
 		if args.InputFile != "" {
@@ -138,6 +136,36 @@ func main() {
 			flag.Usage()
 			os.Exit(2)
 		}
+	}
+
+	// 默认按表名输出文件名
+	if args.OutputFile == "" {
+		table, err := parser.ExtractTableName(sql, args.TablePrefix)
+		if err != nil {
+			exitWithInfo("ExtractTableName %s failed, %s\n", args.OutputFile, err)
+		}
+		if table != "" {
+			// 去掉表前缀 zy_xxx → xxx
+			if args.TablePrefix != "" &&
+				len(table) > len(args.TablePrefix) &&
+				table[:len(args.TablePrefix)] == args.TablePrefix {
+
+				table = table[len(args.TablePrefix):]
+			}
+			args.OutputFile = "model/" + table + ".go"
+		}
+	}
+
+	var output io.Writer
+	if args.OutputFile != "" {
+		f, err := os.OpenFile(args.OutputFile, os.O_CREATE|os.O_WRONLY, 0666)
+		if err != nil {
+			exitWithInfo("open %s failed, %s\n", args.OutputFile, err)
+		}
+		defer f.Close()
+		output = f
+	} else {
+		output = os.Stdout
 	}
 
 	opt := getOptions(args)
